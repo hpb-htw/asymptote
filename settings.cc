@@ -11,9 +11,16 @@
 #include <cerrno>
 #include <sys/stat.h>
 #include <cfloat>
-#include <locale.h>
-#include <unistd.h>
+#include <clocale>
 #include <algorithm>
+
+#if defined(_WIN32)
+#include <Windows.h>
+#include <io.h>
+#define isatty _isatty
+#else
+#include <unistd.h>
+#endif
 
 #include "common.h"
 
@@ -41,14 +48,21 @@
 extern "C" {
 
 #ifdef HAVE_NCURSES_CURSES_H
+#define USE_SETUPTERM
 #include <ncurses/curses.h>
 #include <ncurses/term.h>
 #elif HAVE_NCURSES_H
+#define USE_SETUPTERM
 #include <ncurses.h>
 #include <term.h>
 #elif HAVE_CURSES_H
 #include <curses.h>
+
+#if defined(HAVE_TERM_H)
+#define USE_SETUPTERM
 #include <term.h>
+#endif
+
 #endif
 }
 #endif
@@ -81,16 +95,18 @@ const bool havegl=true;
 const bool havegl=false;
 #endif
 
+#if !defined(_WIN32)
 mode_t mask;
+#endif
 
 string systemDir=ASYMPTOTE_SYSDIR;
 string defaultPSdriver="ps2write";
 string defaultEPSdriver="eps2write";
-string defaultPNGdriver="png16m"; // pngalpha has issues at high resolutions
+string defaultPNGdriver="png16malpha"; // pngalpha has issues at high resolutions
 string defaultAsyGL="https://vectorgraphics.github.io/asymptote/base/webgl/asygl-"+
   string(AsyGLVersion)+".js";
 
-#ifndef __MSDOS__
+#if !defined(_WIN32)
 
 bool msdos=false;
 string HOME="HOME";
@@ -108,7 +124,7 @@ string defaultHTMLViewer="google-chrome";
 string defaultGhostscript="gs";
 string defaultGhostscriptLibrary="";
 string defaultDisplay="display";
-string defaultAnimate="animate";
+string defaultAnimate="magick";
 void queryRegistry() {}
 const string dirsep="/";
 
@@ -118,108 +134,169 @@ bool msdos=true;
 string HOME="USERPROFILE";
 string docdir="c:\\Program Files\\Asymptote";
 const char pathSeparator=';';
-string defaultPSViewer="cmd";
+string defaultPSViewer;
 //string defaultPDFViewer="AcroRd32.exe";
-string defaultPDFViewer="cmd";
-string defaultHTMLViewer="cmd";
+string defaultPDFViewer;
+string defaultHTMLViewer;
 string defaultGhostscript;
 string defaultGhostscriptLibrary;
-string defaultDisplay="cmd";
-//string defaultAnimate="animate";
-string defaultAnimate="cmd";
+string defaultDisplay;
+//string defaultAnimate="magick";
+string defaultAnimate="";
 const string dirsep="\\";
 
-#include <dirent.h>
-
-// Use key to look up an entry in the MSWindows registry, respecting wild cards
-string getEntry(const string& location, const string& key)
+/**
+ * Use key to look up an entry in the MSWindows registry,
+ * @param baseRegLocation base location for a key
+ * @param key Key to look up, respecting wild cards. Note that wildcards
+ * only support single-level glob. Recursive globs are not supported.
+ * @param value Value to look up
+ * @remark Wildcards can only be in keys, not in the final value
+ * @return Entry value, or nullopt if not found
+ */
+optional<string>
+getEntry(HKEY const& baseRegLocation, string const& key, string const& value)
 {
-  string path="/proc/registry"+location+key;
-  size_t star;
-  string head;
-  while((star=path.find("*")) < string::npos) {
-    string prefix=path.substr(0,star);
-    string suffix=path.substr(star+1);
-    size_t slash=suffix.find("/");
-    if(slash < string::npos) {
-      path=suffix.substr(slash);
-      suffix=suffix.substr(0,slash);
-    } else {
-      path=suffix;
-      suffix="";
-    }
-    string directory=head+stripFile(prefix);
-    string file=stripDir(prefix);
-    DIR *dir=opendir(directory.c_str());
-    if(dir == NULL) return "";
-    dirent *p;
-    string rsuffix=suffix;
-    reverse(rsuffix.begin(),rsuffix.end());
-    while((p=readdir(dir)) != NULL) {
-      string dname=p->d_name;
-      string rdname=dname;
-      reverse(rdname.begin(),rdname.end());
-      if(dname != "." && dname != ".." &&
-         dname.substr(0,file.size()) == file &&
-         rdname.substr(0,suffix.size()) == rsuffix) {
-        head=directory+p->d_name;
-        break;
-      }
-    }
-    if(p == NULL) return "";
+  string path= key;
+  if (key.find('\\') == 0) {
+    path= path.substr(1);// strip the prefix separator
   }
-  std::ifstream fin((head+path).c_str());
-  if(fin) {
-    string s;
-    getline(fin,s);
-    size_t end=s.find('\0');
-    if(end < string::npos)
-      return s.substr(0,end);
+
+  size_t const star= path.find('*');
+  if (star == string::npos) {
+    // absolute path, can return right away
+    DWORD dataSize= 0;
+    if (RegGetValueA(
+                baseRegLocation, path.c_str(), value.c_str(), RRF_RT_REG_SZ,
+                nullptr, nullptr, &dataSize
+        ) != ERROR_SUCCESS) {
+      return nullopt;
+    }
+
+    mem::vector<BYTE> outputBuffer(dataSize);
+
+    if (RegGetValueA(
+                baseRegLocation, path.c_str(), value.c_str(), RRF_RT_REG_SZ,
+                nullptr, outputBuffer.data(), &dataSize
+        ) != ERROR_SUCCESS) {
+      return nullopt;
+    }
+
+    return make_optional<string>(
+            reinterpret_cast<char const*>(outputBuffer.data())
+    );
   }
-  return "";
+
+  // has a glob, search until we find one
+  string const prefix= path.substr(0, star);
+  string const pathSuffix= path.substr(star + 1);
+
+  // open the key in prefix
+
+  camp::w32::RegKeyWrapper directoryWithPrefix;
+  if (RegOpenKeyExA(
+              baseRegLocation, prefix.c_str(), 0, KEY_READ,
+              directoryWithPrefix.put()
+      ) != ERROR_SUCCESS) {
+    return nullopt;// prefix path does not exist, or some other error
+  }
+
+  DWORD numSubKeys= 0;
+  DWORD longestSubkeySize= 0;
+
+  // querying # of subkeys + their longest path length
+  if (RegQueryInfoKeyA(
+              directoryWithPrefix.getKey(), nullptr, nullptr, nullptr,
+              &numSubKeys, &longestSubkeySize, nullptr, nullptr, nullptr,
+              nullptr, nullptr, nullptr
+      ) != ERROR_SUCCESS) {
+    return nullopt;
+  }
+
+  mem::vector<CHAR> subkeyBuffer(longestSubkeySize + 1);
+
+  for (DWORD i= 0; i < numSubKeys; ++i) {
+    DWORD cchValue= longestSubkeySize + 1;
+
+    // get subkey's name
+    if (RegEnumKeyExA(
+                directoryWithPrefix.getKey(), i, subkeyBuffer.data(), &cchValue,
+                nullptr, nullptr, nullptr, nullptr
+        ) != ERROR_SUCCESS) {
+      continue;
+    }
+
+    // open the subkey
+    camp::w32::RegKeyWrapper searchKey;
+    if (RegOpenKeyExA(
+                directoryWithPrefix.getKey(), subkeyBuffer.data(), 0, KEY_READ,
+                searchKey.put()
+        ) != ERROR_SUCCESS) {
+      continue;
+    }
+
+    // do a recursive search starting at the opened key
+    if (auto retResult= getEntry(searchKey.getKey(), pathSuffix, value);
+        retResult.has_value()) {
+      return retResult;
+    }
+  }
+  return nullopt;
 }
 
 // Use key to look up an entry in the MSWindows registry, respecting wild cards
-string getEntry(const string& key)
+string getEntry(const string& key, const string& value)
 {
-  string entry=getEntry("64/HKEY_CURRENT_USER/Software/",key);
-  if(entry.empty()) entry=getEntry("64/HKEY_LOCAL_MACHINE/SOFTWARE/",key);
-  if(entry.empty()) entry=getEntry("/HKEY_CURRENT_USER/Software/",key);
-  if(entry.empty()) entry=getEntry("/HKEY_LOCAL_MACHINE/SOFTWARE/",key);
-  return entry;
+  for (HKEY const keyToSearch : {HKEY_LOCAL_MACHINE, HKEY_CURRENT_USER}) {
+    camp::w32::RegKeyWrapper baseRegKey;
+    if (RegOpenKeyExA(keyToSearch, "SOFTWARE", 0, KEY_READ, baseRegKey.put()) !=
+        ERROR_SUCCESS) {
+      baseRegKey.release();
+      continue;
+    }
+    optional<string> entry= getEntry(baseRegKey.getKey(), key, value);
+
+    if (entry.has_value()) {
+      return entry.value();
+    }
+  }
+
+  return "";
 }
 
 void queryRegistry()
 {
-  string defaultGhostscriptLibrary=getEntry("GPL Ghostscript/*/GS_DLL");
-  if(defaultGhostscriptLibrary.empty())
-    defaultGhostscriptLibrary=getEntry("AFPL Ghostscript/*/GS_DLL");
+  defaultGhostscriptLibrary= getEntry(R"(GPL Ghostscript\*)", "GS_DLL");
+  if (defaultGhostscriptLibrary.empty())
+    defaultGhostscriptLibrary= getEntry(R"(AFPL Ghostscript\*)", "GS_DLL");
 
-  string gslib=stripDir(defaultGhostscriptLibrary);
-  defaultGhostscript=stripFile(defaultGhostscriptLibrary)+
-    ((gslib.empty() || gslib.substr(5,2) == "32") ? "gswin32c.exe" : "gswin64c.exe");
-  if(defaultPDFViewer != "cmd")
-    defaultPDFViewer=getEntry("Adobe/Acrobat Reader/*/InstallPath/@")+"\\"+
-      defaultPDFViewer;
-  string s;
-  s=getEntry("Microsoft/Windows/CurrentVersion/App Paths/Asymptote/Path");
-  if(!s.empty()) docdir=s;
+  string gslib= stripDir(defaultGhostscriptLibrary);
+  defaultGhostscript=
+          stripFile(defaultGhostscriptLibrary) +
+          ((gslib.empty() || gslib.substr(5, 2) == "32") ? "gswin32c.exe"
+                                                         : "gswin64c.exe");
+
+  string const s= getEntry(
+          R"(Microsoft\Windows\CurrentVersion\App Paths\Asymptote)", "Path"
+  );
+  if (!s.empty()) {
+    docdir= s;
+  }
   // An empty systemDir indicates a TeXLive build
-  if(!systemDir.empty() && !docdir.empty())
-    systemDir=docdir;
+  if (!systemDir.empty() && !docdir.empty())
+    systemDir= docdir;
 }
 
 #endif
 
-const char PROGRAM[]=PACKAGE_NAME;
-const char VERSION[]=PACKAGE_VERSION;
-const char BUGREPORT[]=PACKAGE_BUGREPORT;
-
 // The name of the program (as called).  Used when displaying help info.
 char *argv0;
 
-// The verbosity setting, a global variable.
 Int verbose;
+bool debug;
+bool xasy;
+bool keys;
+
 bool quiet=false;
 
 // Conserve memory at the expense of speed.
@@ -281,7 +358,7 @@ void Warn(const string& s)
 
 bool warn(const string& s)
 {
-  if(getSetting<bool>("debug")) return true;
+  if(debug) return true;
   array *Warn=getSetting<array *>("suppress");
   size_t size=checkArray(Warn);
   for(size_t i=0; i < size; i++)
@@ -291,10 +368,10 @@ bool warn(const string& s)
 
 // The dictionaries of long options and short options.
 struct option;
-typedef mem::map<CONST string, option *> optionsMap_t;
+typedef mem::map<const string, option *> optionsMap_t;
 optionsMap_t optionsMap;
 
-typedef mem::map<CONST char, option *> codeMap_t;
+typedef mem::map<const char, option *> codeMap_t;
 codeMap_t codeMap;
 
 struct option : public gc {
@@ -364,7 +441,7 @@ struct option : public gc {
 
   // Outputs description of the command for the -help option.
   virtual void describe(char option) {
-    // Don't show the option if it has no desciption.
+    // Don't show the option if it has no description.
     if(!hide() && ((option == 'h') ^ env())) {
       const unsigned WIDTH=22;
       string start=describeStart();
@@ -896,7 +973,7 @@ void addOption(option *o) {
 
 void version()
 {
-  cerr << PROGRAM << " version " << REVISION
+  cerr << PACKAGE_NAME << " version " << REVISION
        << " [(C) 2004 Andy Hammerlindl, John C. Bowman, Tom Prince]"
        << endl;
 }
@@ -1002,7 +1079,7 @@ struct versionOption : public option {
     eigen=true;
 #endif
 
-#ifdef HAVE_RPC_RPC_H
+#ifdef HAVE_LIBTIRPC
     xdr=true;
 #endif
 
@@ -1052,7 +1129,7 @@ struct versionOption : public option {
     feature("LSP      Language Server Protocol",lsp);
     feature("Readline Interactive history and editing",readline);
     if(!readline)
-      feature("Editline interactive editing (if Readline is unavailable)",editline);
+      feature("Editline interactive editing (Readline is unavailable)",editline);
     feature("Sigsegv  Distinguish stack overflows from segmentation faults",
             sigsegv);
     feature("GC       Boehm garbage collector",usegc);
@@ -1194,11 +1271,13 @@ array* stringArray(const char **s)
 void initSettings() {
   static bool initialize=true;
   if(initialize) {
+#if defined(_WIN32)
     queryRegistry();
+#endif
     initialize=false;
   }
 
-  settingsModule=new types::dummyRecord(symbol::trans("settings"));
+  settingsModule=new types::dummyRecord(symbol::literalTrans("settings"));
 
 // Default mouse bindings
 
@@ -1248,6 +1327,8 @@ void initSettings() {
                             "Emulate unimplemented SVG shading", true));
   addOption(new boolSetting("prc", 0,
                             "Embed 3D PRC graphics in PDF output", false));
+  addOption(new boolSetting("v3d", 0,
+                            "Embed 3D V3D graphics in PDF output", false));
   addOption(new boolSetting("toolbar", 0,
                             "Show 3D toolbar in PDF output", true));
   addOption(new boolSetting("axes3", 0,
@@ -1319,7 +1400,7 @@ void initSettings() {
                              "Center, Bottom, Top, or Zero page alignment",
                              "C"));
 
-  addOption(new boolSetting("debug", 'd', "Enable debugging messages"));
+  addOption(new boolrefSetting("debug", 'd', "Enable debugging messages and traceback",&debug));
   addOption(new incrementSetting("verbose", 'v',
                                  "Increase verbosity level (can specify multiple times)", &verbose));
   // Resolve ambiguity with --version
@@ -1387,17 +1468,15 @@ void initSettings() {
                                       "Allow read from other directory",
                                       &globalRead, true));
   addSecureSetting(new stringSetting("outname", 'o', "name",
-                                     "Alternative output directory/filename"));
+                                     "Alternative output directory/file prefix"));
   addOption(new stringOption("cd", 0, "directory", "Set current directory",
                              &startpath));
 
-#ifdef USEGC
   addOption(new compactSetting("compact", 0,
                                "Conserve memory at the expense of speed",
                                &compact));
   addOption(new divisorOption("divisor", 0, "n",
                               "Garbage collect using purge(divisor=n) [2]"));
-#endif
 
   addOption(new stringSetting("prompt", 0,"str","Prompt","> "));
   addOption(new stringSetting("prompt2", 0,"str",
@@ -1405,13 +1484,14 @@ void initSettings() {
                               ".."));
   addOption(new boolSetting("multiline", 0,
                             "Input code over multiple lines at the prompt"));
-  addOption(new boolSetting("xasy", 0,
-                            "Interactive mode for xasy"));
-#ifdef HAVE_LSP
+  addOption(new boolrefSetting("xasy", 0,
+                            "Interactive mode for xasy",&xasy));
+  addOption(new boolrefSetting("keys", 0,
+                            "Generate WebGL keys",&keys));
+
   addOption(new boolSetting("lsp", 0, "Interactive mode for the Language Server Protocol"));
   addOption(new envSetting("lspport", ""));
   addOption(new envSetting("lsphost", "127.0.0.1"));
-#endif
 
   addOption(new boolSetting("wsl", 0, "Run asy under the Windows Subsystem for Linux"));
 
@@ -1454,6 +1534,8 @@ void initSettings() {
 
   addOption(new realSetting("zoomfactor", 0, "factor", "Zoom step factor",
                             1.05));
+  addOption(new realSetting("zoomThreshold", 0, "threshold",
+                            "Zoom remesh threshold", 0.02));
   addOption(new realSetting("zoomPinchFactor", 0, "n",
                             "WebGL zoom pinch sensitivity", 10));
   addOption(new realSetting("zoomPinchCap", 0, "limit",
@@ -1481,7 +1563,7 @@ void initSettings() {
   addOption(new realSetting("paperheight", 0, "bp", "Default page height"));
 
   addOption(new stringSetting("dvipsOptions", 0, "str", ""));
-  addOption(new stringSetting("dvisvgmOptions", 0, "str", ""));
+  addOption(new stringSetting("dvisvgmOptions", 0, "str", "", "--optimize"));
   addOption(new boolSetting("dvisvgmMultipleFiles", 0,
                             "dvisvgm supports multiple files", true));
   addOption(new stringSetting("convertOptions", 0, "str", ""));
@@ -1508,7 +1590,7 @@ void initSettings() {
   addOption(new envSetting("texcommand", ""));
   addOption(new envSetting("dvips", "dvips"));
   addOption(new envSetting("dvisvgm", "dvisvgm"));
-  addOption(new envSetting("convert", "convert"));
+  addOption(new envSetting("convert", "magick"));
   addOption(new envSetting("display", defaultDisplay));
   addOption(new envSetting("animate", defaultAnimate));
   addOption(new envSetting("papertype", "letter"));
@@ -1529,21 +1611,29 @@ char *getArg(int n) { return argList[n]; }
 
 void setInteractive()
 {
-  bool xasy=getSetting<bool>("xasy");
   if(xasy && getSetting<Int>("outpipe") < 0) {
     cerr << "Missing outpipe." << endl;
     exit(-1);
   }
 
+  bool lspmode=getSetting<bool>("lsp");
+
   if(numArgs() == 0 && !getSetting<bool>("listvariables") &&
      getSetting<string>("command").empty() &&
-     (isatty(STDIN_FILENO) || xasy || getSetting<Int>("lsp")))
+     (isatty(STDIN_FILENO) || xasy || lspmode))
     interact::interactive=true;
 
   if(getSetting<bool>("localhistory"))
     historyname=string(getPath())+dirsep+"."+suffix+"_history";
   else {
-    if(mkdir(initdir.c_str(),0777) != 0 && errno != EEXIST)
+#if defined(_WIN32)
+    bool mkdirResult = CreateDirectoryA(initdir.c_str(), nullptr);
+    bool mkdirSuccess = mkdirResult || GetLastError() == ERROR_ALREADY_EXISTS;
+#else
+    int mkdirResult = mkdir(initdir.c_str(),0777);
+    bool mkdirSuccess = mkdirResult == 0 || errno == EEXIST;
+#endif
+    if(!mkdirSuccess)
       cerr << "failed to create directory "+initdir+"." << endl;
     historyname=initdir+"/history";
   }
@@ -1616,12 +1706,14 @@ void initDir() {
   if(initdir.empty())
     initdir=Getenv(HOME.c_str(),msdos)+dirsep+"."+suffix;
 
-#ifdef __MSDOS__
-  mask=umask(0);
-  if(mask == 0) mask=0027;
-  umask(mask);
+#if defined(_WIN32)
+  DWORD dirAttrib = GetFileAttributesA(initdir.c_str());
+  bool dirExists = dirAttrib != INVALID_FILE_ATTRIBUTES && ((dirAttrib & FILE_ATTRIBUTE_DIRECTORY) != 0);
+#else
+  bool dirExists = access(initdir.c_str(),F_OK) == 0;
 #endif
-  if(access(initdir.c_str(),F_OK) == 0) {
+
+  if(dirExists) {
     if(!quiet && verbose > 1)
       cerr << "Using configuration directory " << initdir << endl;
   }
@@ -1639,7 +1731,14 @@ void setPath() {
     }
     if(i < asydir.length()) searchPath.push_back(asydir.substr(i));
   }
-  if(access(initdir.c_str(),F_OK) == 0)
+#if defined(_WIN32)
+  DWORD dirAttrib = GetFileAttributesA(initdir.c_str());
+  bool dirExists = dirAttrib != INVALID_FILE_ATTRIBUTES && ((dirAttrib & FILE_ATTRIBUTE_DIRECTORY) != 0);
+#else
+  bool dirExists = access(initdir.c_str(),F_OK) == 0;
+#endif
+
+  if(dirExists)
     searchPath.push_back(initdir);
   string sysdir=getSetting<string>("sysdir");
   if(sysdir != "")
@@ -1810,7 +1909,7 @@ Int getScroll()
     if(!terminal)
       terminal=getenv("TERM");
     if(terminal) {
-#ifndef __MSDOS__
+#if defined(USE_SETUPTERM)
       int error=setupterm(terminal,1,&error);
       if(error == 0) scroll=lines > 2 ? lines-1 : 1;
       else
@@ -1884,10 +1983,10 @@ void setOptions(int argc, char *argv[])
     docdir=getSetting<string>("dir");
 
 #ifdef USEGC
-  if(verbose == 0 && !getSetting<bool>("debug")) GC_set_warn_proc(no_GCwarn);
+  if(verbose == 0 && !debug) GC_set_warn_proc(no_GCwarn);
 #endif
 
-  if(setlocale (LC_ALL, "") == NULL && getSetting<bool>("debug"))
+  if(setlocale (LC_ALL, "") == NULL && debug)
     perror("setlocale");
 
   // Set variables for the file arguments.

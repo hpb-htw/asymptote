@@ -9,7 +9,7 @@
  *
  * genv sets up the basic type bindings and function bindings for
  * builtin functions, casts and operators, and imports plain (if set),
- * but all other initialization, is done by the local environmet defined
+ * but all other initialization, is done by the local environment defined
  * in env.h.
  *****/
 
@@ -21,7 +21,6 @@
 #include "record.h"
 #include "absyn.h"
 #include "access.h"
-#include "coenv.h"
 #include "stack.h"
 
 using types::record;
@@ -31,7 +30,7 @@ namespace trans {
 
 class genv : public gc {
   // The initializer functions for imports, indexed by filename.
-  typedef mem::map<CONST string,record *> importMap;
+  typedef mem::map<symbol,record *> importMap;
   importMap imap;
 
   // List of modules in translation.  Used to detect and prevent infinite
@@ -43,13 +42,23 @@ class genv : public gc {
   void checkRecursion(string filename);
 
   // Translate a module to build the record type.
-  record *loadModule(symbol name, string s);
+  record *loadModule(symbol name, string filename);
+  record *loadTemplatedModule(
+      symbol id,
+      string filename,
+      mem::vector<absyntax::namedTy*> *args
+  );
 
 public:
   genv();
 
   // Get an imported module, translating if necessary.
-  record *getModule(symbol name, string s);
+  record *getModule(symbol name, string filename);
+  record *getTemplatedModule(
+      string filename,
+      mem::vector<absyntax::namedTy*> *args
+  );
+  record *getLoadedModule(symbol index);
 
   // Uses the filename->record map to build a filename->initializer map to be
   // used at runtime.

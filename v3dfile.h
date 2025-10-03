@@ -14,17 +14,17 @@
 
 #include "common.h"
 
-#ifdef HAVE_RPC_RPC_H
+#ifdef HAVE_LIBTIRPC
 
 #include "abs3doutfile.h"
 #include "xstream.h"
 #include "triple.h"
 #include "material.h"
-#include "glrender.h"
 #define transform transform_
 #include "v3dtypes.h"
 #undef transform
 #include "v3dheadertypes.h"
+#include "fileio.h"
 
 namespace camp
 {
@@ -160,16 +160,9 @@ public:
 protected:
   xdr::oxstream& getXDRFile() override;
 
-  [[nodiscard]]
-  char const* data() const;
-
-  [[nodiscard]]
-  size_t const& length() const;
-
 private:
-  xdr::memoxstream memxdrfile;
+  camp::ogzxfile memfile;
   string name;
-  bool destroyed;
   void close() override;
 };
 

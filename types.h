@@ -62,8 +62,8 @@ typedef ty_vector::iterator ty_iterator;
 // Arrays are equal if their cell types are equal.
 bool equivalent(const ty *t1, const ty *t2);
 
-// If special is true, this is the same as above.  If special is false, just the
-// signatures are compared.
+// If special is true, this is the same as above.  If special is false, just
+// the signatures are compared.
 bool equivalent(const ty *t1, const ty *t2, bool special);
 
 class caster {
@@ -345,7 +345,9 @@ struct signature : public gc {
     : numKeywordOnly(0), rest(0), isOpen(false)
   {}
 
-  static const struct OPEN_t {} OPEN;
+  struct OPEN_t {};
+
+  static const OPEN_t OPEN;
 
   explicit signature(OPEN_t) : numKeywordOnly(0), rest(0), isOpen(true) {}
 
@@ -398,6 +400,7 @@ struct signature : public gc {
     return n >= formals.size() - numKeywordOnly;
   }
 
+  friend string toString(const signature& s);
   friend ostream& operator<< (ostream& out, const signature& s);
 
   friend bool equivalent(const signature *s1, const signature *s2);
@@ -412,6 +415,9 @@ struct signature : public gc {
 #endif
 
   size_t hash() const;
+
+  // Return a unique handle for this signature
+  size_t handle();
 };
 
 struct function : public ty {
@@ -530,15 +536,25 @@ public:
     return 0;
   }
 
+
+#ifdef __clang__
+#elif __GNUC__
+#pragma GCC push_options
+#pragma GCC optimize("O2")
+#endif
   void add(ty *t) {
     if (t->kind == ty_overloaded) {
       overloaded *ot = (overloaded *)t;
       copy(ot->sub.begin(), ot->sub.end(),
            inserter(this->sub, this->sub.end()));
-    }
+  }
     else
       sub.push_back(t);
   }
+#ifdef __clang__
+#elif __GNUC__
+#pragma GCC pop_options
+#endif
 
   // Only add a type distinct from the ones currently in the overloaded type.
   // If special is false, just the distinct signatures are added.

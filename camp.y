@@ -76,7 +76,7 @@ using mem::string;
   absyntax::arglist *alist;
   absyntax::slice *slice;
   absyntax::dimensions *dim;
-  absyntax::ty  *t;
+  absyntax::astType  *t;
   absyntax::decid *di;
   absyntax::decidlist *dil;
   absyntax::decidstart *dis;
@@ -102,7 +102,9 @@ using mem::string;
   //absyntax::funheader *fh;
   absyntax::formal *fl;
   absyntax::formals *fls;
-}  
+  absyntax::typeParam *tp;
+  absyntax::typeParamList *tps;
+}
 
 %token <ps> ID SELFOP
             DOTS COLONS DASHES INCR LONGDASH
@@ -112,9 +114,9 @@ using mem::string;
 %token <pos> LOOSE ASSIGN '?' ':'
              DIRTAG JOIN_PREC AND
              '{' '}' '(' ')' '.' ','  '[' ']' ';' ELLIPSIS
-             ACCESS UNRAVEL IMPORT INCLUDE FROM QUOTE STRUCT TYPEDEF NEW
+             ACCESS UNRAVEL IMPORT INCLUDE FROM QUOTE STRUCT TYPEDEF USING NEW
              IF ELSE WHILE DO FOR BREAK CONTINUE RETURN_
-             THIS EXPLICIT
+             THIS_TOK EXPLICIT
              GARBAGE
 %token <e>   LIT
 %token <stre> STRING
@@ -136,7 +138,7 @@ using mem::string;
 %left  DIRTAG CONTROLS TENSION ATLEAST AND
 %left  CURL '{' '}'
 
-%left  '+' '-' 
+%left  '+' '-'
 %left  '*' '/' '%' '#' LIT
 %left  UNARY
 %right '^'
@@ -151,7 +153,7 @@ using mem::string;
 %type  <ps>  strid
 %type  <ip>  idpair stridpair
 %type  <ipl> idpairlist stridpairlist
-%type  <vd>  vardec barevardec 
+%type  <vd>  vardec barevardec
 %type  <t>   type celltype
 %type  <dim> dims
 %type  <dil> decidlist
@@ -159,8 +161,8 @@ using mem::string;
 %type  <dis> decidstart
 %type  <vi>  varinit
 %type  <ai>  arrayinit basearrayinit varinits
-%type  <fl>  formal
-%type  <fls> formals
+%type  <fl>  formal decdec
+%type  <fls> formals decdeclist
 %type  <e>   value exp fortest
 %type  <arg> argument
 %type  <slice> slice
@@ -172,7 +174,9 @@ using mem::string;
 %type  <s>   stm stmexp blockstm
 %type  <run> forinit
 %type  <sel> forupdate stmexplist
-%type  <boo> explicitornot
+%type  <boo> explicitornot optionalcomma
+%type <tp> typeparam
+%type <tps> typeparamlist
 
 /* There are four shift/reduce conflicts:
  *   the dangling ELSE in IF (exp) IF (exp) stm ELSE stm
@@ -245,9 +249,64 @@ dec:
                    { $$ = new fromaccessdec($1, $2.sym, WILDCARD); }
 | IMPORT stridpair ';'
                    { $$ = new importdec($1, $2); }
-| INCLUDE ID ';'   { $$ = new includedec($1, $2.sym); }                   
+| INCLUDE ID ';'   { $$ = new includedec($1, $2.sym); }
 | INCLUDE STRING ';'
                    { $$ = new includedec($1, $2->getString()); }
+
+// Experimental - templated imports.
+| TYPEDEF IMPORT '(' typeparamlist ')' ';'
+                   { $$ = new receiveTypedefDec($1, $4); }
+| IMPORT TYPEDEF '(' typeparamlist ')' ';'
+                   { $$ = new badDec($1, $1,
+                     "Expected 'typedef import(<types>);'");
+                   }
+/* ACCESS strid '(' decdeclist ')' 'as' ID */
+| ACCESS strid '(' decdeclist ')' ID ID ';'
+                   { $$ = new templateAccessDec(
+                        $1, $2.sym, $4, $6.sym, $7.sym, $6.pos
+                      ); }
+| ACCESS strid '(' decdeclist ')' ';'
+                   { $$ = new badDec($1, $6, "expected 'as'"); }
+| IMPORT strid '(' decdeclist ')' ';'
+                   { $$ = new badDec($1, $1,
+                        "Parametrized imports disallowed to reduce naming "
+                        "conflicts. Try "
+                        "'access <module>(<type parameters>) as <newname>;'."
+                     ); }
+| FROM strid '(' decdeclist ')' ACCESS idpairlist ';'
+                   { $$ = new fromaccessdec($1, $2.sym, $7, $4); }
+;
+
+optionalcomma:
+  ','              { $$ = true; }
+|                  { $$ = false; }
+;
+
+// List mapping dec to dec as in "Key=string, Value=int"
+decdec:
+    ID ASSIGN type
+                   { $$ = new formal(
+                        $1.pos, $3, new decidstart($1.pos, $1.sym)
+                      ); }
+| type { $$ = new formal($1->getPos(), $1, nullptr); }  // ultimately log error
+;
+
+decdeclist:
+    decdec
+                   { $$ = new formals($1->getPos()); $$->add($1); }
+|   decdeclist ',' decdec
+                   { $$ = $1; $$->add($3); }
+;
+
+typeparam:
+    ID { $$ = new typeParam($1.pos, $1.sym); }
+;
+
+typeparamlist:
+  typeparam
+                   { $$ = new typeParamList($1->getPos()); $$->add($1); }
+| typeparamlist ',' typeparam
+                   { $$ = $1; $$->add($3); }
 ;
 
 idpair:
@@ -367,8 +426,8 @@ formals:
 | ELLIPSIS formal  { $$ = new formals($1); $$->addRest($2); }
 | formals ',' formal
                    { $$ = $1; $$->add($3); }
-| formals ELLIPSIS formal
-                   { $$ = $1; $$->addRest($3); }
+| formals optionalcomma ELLIPSIS formal
+                   { $$ = $1; $$->addRest($4); }
 ;
 
 explicitornot:
@@ -402,6 +461,20 @@ fundec:
 typedec:
   STRUCT ID block  { $$ = new recorddec($1, $2.sym, $3); }
 | TYPEDEF vardec   { $$ = new typedec($1, $2); }
+// See definition for decidstart. Following C++, "The syntax of the type-id
+// that names type T is exactly the syntax of a declaration of a variable or
+// function of type T, with the identifier omitted."
+// http://en.cppreference.com/w/cpp/language/type#Type_naming
+| USING ID ASSIGN type ';'
+                   { decidstart *dis = new decidstart($2.pos, $2.sym);
+                     $$ = new typedec($1, dis, $4); }
+| USING ID ASSIGN type '(' ')' ';'
+                   { decidstart *dis = new fundecidstart($2.pos, $2.sym,
+                                                         0, new formals($5));
+                     $$ = new typedec($1, dis, $4); }
+| USING ID ASSIGN type '(' formals ')' ';'
+                   { decidstart *dis = new fundecidstart($2.pos, $2.sym, 0, $6);
+                     $$ = new typedec($1, dis, $4); }
 ;
 
 slice:
@@ -412,7 +485,7 @@ slice:
 ;
 
 value:
-  value '.' ID     { $$ = new fieldExp($2, $1, $3.sym); } 
+  value '.' ID     { $$ = new fieldExp($2, $1, $3.sym); }
 | name '[' exp ']' { $$ = new subscriptExp($2,
                               new nameExp($1->getPos(), $1), $3); }
 | value '[' exp ']'{ $$ = new subscriptExp($2, $1, $3); }
@@ -421,9 +494,9 @@ value:
 | value '[' slice ']'{ $$ = new sliceExp($2, $1, $3); }
 | name '(' ')'     { $$ = new callExp($2,
                                       new nameExp($1->getPos(), $1),
-                                      new arglist()); } 
+                                      new arglist()); }
 | name '(' arglist ')'
-                   { $$ = new callExp($2, 
+                   { $$ = new callExp($2,
                                       new nameExp($1->getPos(), $1),
                                       $3); }
 | value '(' ')'    { $$ = new callExp($2, $1, new arglist()); }
@@ -433,7 +506,7 @@ value:
                    { $$ = $2; }
 | '(' name ')' %prec EXP_IN_PARENS_RULE
                    { $$ = new nameExp($2->getPos(), $2); }
-| THIS             { $$ = new thisExp($1); }
+| THIS_TOK         { $$ = new thisExp($1); }
 ;
 
 argument:
@@ -447,8 +520,8 @@ arglist:
                    { $$ = new arglist(); $$->addRest($2); }
 | arglist ',' argument
                    { $$ = $1; $$->add($3); }
-| arglist ELLIPSIS argument
-                   { $$ = $1; $$->addRest($3); }
+| arglist optionalcomma ELLIPSIS argument
+                   { $$ = $1; $$->addRest($4); }
 ;
 
 /* A list of two or more expressions, separated by commas. */
@@ -521,7 +594,7 @@ exp:
                    { $$ = new conditionalExp($2, $1, $3, $5); }
 | exp ASSIGN exp   { $$ = new assignExp($2, $1, $3); }
 | '(' tuple ')'    { $$ = new callExp($1, new nameExp($1, SYM_TUPLE), $2); }
-| exp join exp %prec JOIN_PREC 
+| exp join exp %prec JOIN_PREC
                    { $2->pushFront($1); $2->pushBack($3); $$ = $2; }
 | exp dir %prec DIRTAG
                    { $2->setSide(camp::OUT);
@@ -534,7 +607,7 @@ exp:
 | DASHES exp %prec UNARY
                    { $$ = new prefixExp($1.pos, $2, SYM_MINUS); }
 /* Illegal - will be caught during translation. */
-| exp INCR %prec UNARY 
+| exp INCR %prec UNARY
                    { $$ = new postfixExp($2.pos, $1, SYM_PLUS); }
 | exp SELFOP exp   { $$ = new selfExp($2.pos, $1, $2.sym, $3); }
 | QUOTE '{' fileblock '}'
@@ -545,12 +618,12 @@ exp:
 // made a whack of reduce/reduce errors.
 join:
   DASHES           { $$ = new joinExp($1.pos,$1.sym); }
-| basicjoin %prec JOIN_PREC 
+| basicjoin %prec JOIN_PREC
                    { $$ = $1; }
 | dir basicjoin %prec JOIN_PREC
                    { $1->setSide(camp::OUT);
                      $$ = $2; $$->pushFront($1); }
-| basicjoin dir %prec JOIN_PREC 
+| basicjoin dir %prec JOIN_PREC
                    { $2->setSide(camp::IN);
                      $$ = $1; $$->pushBack($2); }
 | dir basicjoin dir %prec JOIN_PREC
@@ -585,7 +658,7 @@ tension:
 | TENSION exp AND exp
                    { $$ = new ternaryExp($1.pos, $2, $1.sym, $4,
                               new booleanExp($1.pos, false)); }
-| TENSION ATLEAST exp 
+| TENSION ATLEAST exp
                    { $$ = new binaryExp($1.pos, $3, $1.sym,
                               new booleanExp($2.pos, true)); }
 | TENSION ATLEAST exp AND exp

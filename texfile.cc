@@ -145,8 +145,11 @@ void texfile::prologue(bool deconstruct)
     beginpage();
 }
 
-void texfile::beginlayer(const string& psname, bool postscript)
+void texfile::beginlayer(string psname, bool postscript)
 {
+#ifdef _WIN32
+  backslashToSlash(psname);
+#endif
   if(box.right > box.left && box.top > box.bottom) {
     if(postscript) {
       if(settings::context(texengine))
@@ -477,9 +480,8 @@ void svgtexfile::properties(const pen& p)
   const LineType *lastlinetype=lastpen.linetype();
 
   if(!(linetype->pattern == lastlinetype->pattern)) {
-    bool xasy=getSetting<bool>("xasy");
     auto qtfix=[&](double x) {
-      return xasy ? max(x,1.0e-6) : x;
+      return settings::xasy ? max(x,1.0e-6) : x;
     };
     size_t n=linetype->pattern.size();
     if(n > 0) {
@@ -524,10 +526,10 @@ void svgtexfile::begingradientshade(bool axial, ColorSpace colorspace,
   begintransform();
   *out << "<" << type << "Gradient id='grad" << gradientcount;
   if(axial) {
-    *out << "' x1='" << a.getx()*ps2tex << "' y1='" << (box.top-a.gety())*ps2tex
-         << "' x2='" << b.getx()*ps2tex << "' y2='" << (box.top-b.gety())*ps2tex;
+    *out << "' x1='" << (a.getx()-offset.getx())*ps2tex << "' y1='" << (offset.gety()-a.gety())*ps2tex
+         << "' x2='" << (b.getx()-offset.getx())*ps2tex << "' y2='" << (offset.gety()-b.gety())*ps2tex;
   } else {
-    *out << "' cx='" << b.getx()*ps2tex << "' cy='" << (box.top-b.gety())*ps2tex
+    *out << "' cx='" << (b.getx()-offset.getx())*ps2tex << "' cy='" << (offset.gety()-b.gety())*ps2tex
          << "' r='" << rb*ps2tex;
   }
   *out <<"' gradientUnits='userSpaceOnUse'>" << nl

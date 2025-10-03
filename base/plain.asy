@@ -1,8 +1,8 @@
 /*****
- * plain.asy
- * Andy Hammerlindl and John Bowman 2004/08/19
+ *plain.asy
+ *Andy Hammerlindl and John Bowman 2004/08/19
  *
- * A package for general purpose drawing, with automatic sizing of pictures.
+ *A package for general purpose drawing, with automatic sizing of pictures.
  *
  *****/
 
@@ -41,7 +41,7 @@ include plain_debugger;
 
 real RELEASE=(real) split(VERSION,"-")[0];
 
-typedef void exitfcn();
+using exitfcn=void();
 
 void updatefunction()
 {
@@ -63,8 +63,8 @@ atexit(exitfunction);
 
 // A restore thunk is a function, that when called, restores the graphics state
 // to what it was when the restore thunk was created.
-typedef void restoreThunk();
-typedef restoreThunk saveFunction();
+using restoreThunk=void();
+using saveFunction=restoreThunk();
 saveFunction[] saveFunctions={};
 
 // When save is called, this will be redefined to do the corresponding restore.
@@ -82,18 +82,18 @@ restoreThunk buildRestoreThunk()
 {
   // Call the save functions in reverse order, storing their restore thunks.
   restoreThunk[] thunks={};
-  for (int i=saveFunctions.length-1; i >= 0; --i)
+  for(int i=saveFunctions.length-1; i >= 0; --i)
     thunks.push(saveFunctions[i]());
 
   return new void() {
     // Call the restore thunks in an order matching the saves.
-    for (int i=thunks.length-1; i >= 0; --i)
+    for(int i=thunks.length-1; i >= 0; --i)
       thunks[i]();
   };
 }
 
 // Add the default save function.
-addSaveFunction(new restoreThunk () {
+addSaveFunction(new restoreThunk() {
     pen defaultpen=defaultpen();
     pen p=currentpen;
     picture pic=currentpicture.copy();
@@ -188,17 +188,20 @@ void eval(code s, bool embedded=false)
   if(!embedded) restoredefaults();
 }
 
-// Associate a parametrized type with a name.
-void type(string type, string name)
+string mapArrayString(string From, string To)
 {
-  eval("typedef "+type+" "+name,true);
+  return "typedef "+From+" From;
+  typedef "+To+" To;
+  To[] map(To f(From), From[] a) {
+    return sequence(new To(int i) {return f(a[i]);},a.length);
+  }";
 }
 
+// This function is deprecated: use
+// from mapArray(Src=T1, Dst=T2) access map;
 void mapArray(string From, string To)
 {
-  type(From,"From");
-  type(To,"To");
-  eval("To[] map(To f(From), From[] a) {return sequence(new To(int i) {return f(a[i]);},a.length);}",true);
+  eval(mapArrayString(From,To),true);
 }
 
 // Evaluate user command line option.
@@ -240,8 +243,8 @@ void asy(string format, bool overwrite=false ... string[] s)
       settings.outformat=outformat;
       settings.interactiveView=interactiveView;
       settings.batchView=batchView;
-    }
-  }
+   }
+ }
 }
 
 void beep()

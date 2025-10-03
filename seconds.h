@@ -2,16 +2,22 @@
 #define __seconds_h__ 1
 
 #include <chrono>
-#include <sys/resource.h>
 
-namespace utils {
+#if !defined(_WIN32)
+#include <sys/resource.h>
+#endif
+
 
 #ifdef _WIN32
 #include <Windows.h>
 #define getpid GetCurrentProcessId
+#endif
+
+namespace utils {
+#ifdef _WIN32
 inline double cpuTime() {
   FILETIME a,b,c,d;
-  return GetProcessTimes(GetCurrentThread(),&a,&b,&c,&d) != 0 ?
+  return GetProcessTimes(GetCurrentProcess(),&a,&b,&c,&d) != 0 ?
     (double) (d.dwLowDateTime |
               ((unsigned long long)d.dwHighDateTime << 32))*100.0 : 0.0;
 }
@@ -20,17 +26,10 @@ inline double cpuTime() {
 #include <time.h>
 
 inline double cpuTime() {
-#ifdef CLOCK_THREAD_CPUTIME_ID
-#define GETTIME_ID CLOCK_THREAD_CPUTIME_ID
-#elif defined(CLOCK_PROCESS_CPUTIME_ID)
-#define GETTIME_ID CLOCK_PROCESS_CPUTIME_ID
-#endif
-
-#ifdef GETTIME_ID
+#ifdef CLOCK_PROCESS_CPUTIME_ID
   timespec t;
-  clock_gettime(GETTIME_ID,&t);
+  clock_gettime(CLOCK_PROCESS_CPUTIME_ID,&t);
   return 1.0e9*t.tv_sec+t.tv_nsec;
-#undef GETTIME_ID
 #else
   struct rusage ru;
   if(getrusage(RUSAGE_SELF, &ru))
@@ -84,8 +83,10 @@ public:
   double nanoseconds(bool reset=false) {
     auto Stop=std::chrono::steady_clock::now();
     double stop=cpuTime();
-    double ns=std::min((double) std::chrono::duration_cast<std::chrono::nanoseconds>
-                       (Stop-Start).count(),stop-start);
+    double ns=std::chrono::duration_cast<std::chrono::nanoseconds>(Stop-Start).count();
+    double cputime=stop-start;
+    if((cputime > 0 && cputime < ns) || ns == 0) ns=cputime;
+
     if(reset) {
       Start=Stop;
       start=stop;
@@ -98,6 +99,16 @@ public:
   }
 };
 
+}
+
+// POSIX--style rename that allows overwriting
+inline int renameOverwrite(const char *oldpath, const char *newpath) {
+#if defined(_WIN32)
+  return !MoveFileExA(
+    oldpath, newpath, MOVEFILE_REPLACE_EXISTING | MOVEFILE_COPY_ALLOWED);
+#else
+  return rename(oldpath,newpath);
+#endif
 }
 
 #endif

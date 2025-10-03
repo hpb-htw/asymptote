@@ -207,9 +207,10 @@ void jsfile::finish(string name)
   size_t ncenters=drawElement::centers.size();
   if(ncenters > 0) {
     out << s << "Centers=[";
-    for(size_t i=0; i < ncenters; ++i)
+    size_t last=ncenters-1;
+    for(size_t i=0; i < last; ++i)
       out << newl << drawElement::centers[i] << ",";
-    out << newl << "];" << newl;
+    out << newl << drawElement::centers[last] << newl << "];" << newl;
   }
   out << "</script>"
       << newl << "</head>"
@@ -235,26 +236,30 @@ void jsfile::addIndices(const uint32_t *I)
 void jsfile::addRawPatch(triple const* controls, size_t n,
                          const prc::RGBAColour *c, size_t nc)
 {
-  out << "patch([" << newl;
-  size_t last=n-1;
-  for(size_t i=0; i < last; ++i)
-    out << controls[i] << "," << newl;
-  out << controls[last] << newl << "],"
-      << drawElement::centerIndex << "," << materialIndex;
-  if(c) {
-    out << ",[" << newl;
-    for(size_t i=0; i < nc; ++i) {
-      addColor(c[i]);
-      out << "," << newl;
+  if(n) {
+    addKey();
+    out << "patch([" << newl;
+    size_t last=n-1;
+    for(size_t i=0; i < last; ++i)
+      out << controls[i] << "," << newl;
+    out << controls[last] << newl << "],"
+        << drawElement::centerIndex << "," << materialIndex;
+    if(c) {
+      out << ",[" << newl;
+      for(size_t i=0; i < nc; ++i) {
+        addColor(c[i]);
+        out << "," << newl;
+      }
+      out << "]";
     }
-    out << "]";
+    out << ");" << newl << newl;
   }
-  out << ");" << newl << newl;
 }
 
 void jsfile::addCurve(const triple& z0, const triple& c0,
                       const triple& c1, const triple& z1)
 {
+  addKey();
   out << "curve([" << newl;
   out << z0 << "," << newl
       << c0 << "," << newl
@@ -266,6 +271,7 @@ void jsfile::addCurve(const triple& z0, const triple& c0,
 
 void jsfile::addCurve(const triple& z0, const triple& z1)
 {
+  addKey();
   out << "curve([" << newl;
   out << z0 << "," << newl
       << z1 << newl << "],"
@@ -275,6 +281,7 @@ void jsfile::addCurve(const triple& z0, const triple& z1)
 
 void jsfile::addPixel(const triple& z0, double width)
 {
+  addKey();
   out << "pixel(" << newl;
   out << z0 << "," << width << "," << newl << materialIndex
       << ");" << newl << newl;
@@ -294,35 +301,61 @@ void jsfile::addTriangles(size_t nP, const triple* P, size_t nN,
                           size_t nI, const uint32_t (*PI)[3],
                           const uint32_t (*NI)[3], const uint32_t (*CI)[3])
 {
-  for(size_t i=0; i < nP; ++i)
-    out << "Positions.push(" << P[i] << ");" << newl;
-
-  for(size_t i=0; i < nN; ++i)
-    out << "Normals.push(" << N[i] << ");" << newl;
-
-  for(size_t i=0; i < nC; ++i) {
-    out << "Colors.push(";
-    addColor(C[i]);
-    out << ");" << newl;
+  addKey();
+  if(nP) {
+    out << "Positions=[";
+    size_t last=nP-1;
+    for(size_t i=0; i < last; ++i)
+      out << newl << P[i] << ",";
+    out << newl << P[last] << newl << "];" << newl;
   }
 
-  for(size_t i=0; i < nI; ++i) {
-    out << "Indices.push([";
-    const uint32_t *PIi=PI[i];
-    const uint32_t *NIi=NI[i];
-    bool keepNI=distinct(NIi,PIi);
-    bool keepCI=nC && distinct(CI[i],PIi);
-    addIndices(PIi);
-    if(keepNI || keepCI) {
-      out << ",";
-      if(keepNI) addIndices(NIi);
-    }
-    if(keepCI) {
-      out << ",";
-      addIndices(CI[i]);
-    }
-    out << "]);" << newl;
+  if(nN) {
+    size_t last=nN-1;
+    out << "Normals=[";
+    for(size_t i=0; i < last; ++i)
+      out << newl << N[i] << ",";
+    out << newl << N[last] << newl << "];" << newl;
   }
+
+  if(nC) {
+    size_t last=nC-1;
+    out << "Colors=[";
+    for(size_t i=0; i < last; ++i) {
+      out << newl;
+      addColor(C[i]);
+      out << ",";
+    }
+    out << newl;
+    addColor(C[last]);
+    out << newl << "];" << newl;
+  }
+
+  if(nI) {
+    out << "Indices=[";
+    size_t last=nI-1;
+    for(size_t i=0; i < nI; ++i) {
+      const uint32_t *PIi=PI[i];
+      const uint32_t *NIi=NI[i];
+      bool keepNI=distinct(NIi,PIi);
+      bool keepCI=nC && distinct(CI[i],PIi);
+      out << newl << "[";
+      addIndices(PIi);
+      if(keepNI || keepCI) {
+        out << ",";
+        if(keepNI) addIndices(NIi);
+      }
+      if(keepCI) {
+        out << ",";
+        addIndices(CI[i]);
+      }
+      out << "]";
+      if(i < last)
+        out << ",";
+    }
+    out << newl << "];" << newl;
+  }
+
   out << "triangles("
       << drawElement::centerIndex << "," << materialIndex
       << ");" << newl << newl;
@@ -330,6 +363,7 @@ void jsfile::addTriangles(size_t nP, const triple* P, size_t nN,
 
 void jsfile::addSphere(const triple& center, double radius)
 {
+  addKey();
   out << "sphere(" << center << "," << radius << ","
       << drawElement::centerIndex << "," << materialIndex
       << ");" << newl << newl;
@@ -338,6 +372,7 @@ void jsfile::addSphere(const triple& center, double radius)
 void jsfile::addHemisphere(const triple& center, double radius,
                            const double& polar, const double& azimuth)
 {
+  addKey();
   out << "sphere(" << center << "," << radius << ","
       << drawElement::centerIndex << "," << materialIndex
       << "," << newl << "[" << polar << "," << azimuth << "]";
@@ -350,6 +385,7 @@ void jsfile::addCylinder(const triple& center, double radius, double height,
                          const double& polar, const double& azimuth,
                          bool core)
 {
+  addKey();
   out << "cylinder(" << center << "," << radius << "," << height << ","
       << drawElement::centerIndex << "," << materialIndex
       << "," << newl << "[" << polar << "," << azimuth << "]," << core
@@ -359,6 +395,7 @@ void jsfile::addCylinder(const triple& center, double radius, double height,
 void jsfile::addDisk(const triple& center, double radius,
                      const double& polar, const double& azimuth)
 {
+  addKey();
   out << "disk(" << center << "," << radius << ","
       << drawElement::centerIndex << "," << materialIndex
       << "," << newl << "[" << polar << "," << azimuth << "]"
@@ -367,6 +404,7 @@ void jsfile::addDisk(const triple& center, double radius,
 
 void jsfile::addTube(const triple *g, double width, bool core)
 {
+  addKey();
   out << "tube(["
       << g[0] << "," << newl
       << g[1] << "," << newl

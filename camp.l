@@ -39,7 +39,7 @@ Int tokPos;
 Int charPos;
 //int commentDepth = 0;
 
-bool eof;
+bool isEof;
 string eofMessage;
 
 extern errorstream em;
@@ -54,7 +54,7 @@ typedef size_t (*input_f) (char* bif, size_t max_size);
 
 input_f yy_input = NULL;
 
-void setlexer(input_f input, string filename) 
+void setlexer(input_f input, string filename)
 {
   YY_FLUSH_BUFFER;
   yywrap();
@@ -62,7 +62,7 @@ void setlexer(input_f input, string filename)
   yy_input = input;
   tokPos = charPos = 1;
 
-  eof=false;
+  isEof=false;
   eofMessage="<no eof>";
 }
 
@@ -74,7 +74,7 @@ position lexerPos()
   p.init(fi, tokPos);
   return p;
 }
-  
+
 namespace {
 position here()
 
@@ -87,7 +87,7 @@ void adjust()
   tokPos = charPos;
   charPos += yyleng;
   yylval.pos = here();
-} 
+}
 
 void savesymbol(symbol name)
 {
@@ -101,7 +101,7 @@ void savesymbol(symbol name)
  * etc.  Following the Don't Repeat Yourself principle, the mapping from
  * strings to names is defined only here in camp.l (because we can't produce
  * lex rules from a C style macro).
- * The script opsymbols.pl reads this file scanning for rules using DEFSYMBOL
+ * The script opsymbols.py reads this file scanning for rules using DEFSYMBOL
  * and creates opsymbols.h which defines the names for use in C++ code.
  */
 #define DEFSYMBOL(name) \
@@ -151,24 +151,24 @@ void error(void)
 // the error message that should be reported, and may differ if, say the input
 // ends in the middle of a string or comment.
 void setEOF(string message) {
-  eof=true;
+  isEof=true;
   eofMessage=message;
 }
-  
+
 // Called by code outside of the lexer to see if a parse error was caused by
 // running out of input.
 bool lexerEOF()
 {
-  return eof;
+  return isEof;
 }
 
 // Called by code outside of the lexer when it wants to report the unexpected
 // eof as an error (instead of looking for more input).
 void reportEOF() {
-  assert(eof);
+  assert(isEof);
   error();
   em << eofMessage;
-  em.sync();
+  em.sync(true);
 }
 
 position stringpos; // The position of the start of the string.
@@ -225,14 +225,14 @@ EXTRAOPS <<|>>|$|$$|@|@@|~|<>
 
 <texstring>{
 \"/([ \t]|{ENDL})*[\"\'] {adjust(); BEGIN INITIAL;}
-\"                 {adjust(); 
+\"                 {adjust();
                     BEGIN INITIAL;
-                    getstring(); 
+                    getstring();
                     return STRING; }
 <<EOF>>            {adjust();
                     setEOF("string not terminated");
                     BEGIN INITIAL;
-                    getstring(); 
+                    getstring();
                     return GARBAGE;
                    }
 {ENDL}             {adjust(); newline(); append('\n'); continue; }
@@ -243,14 +243,14 @@ EXTRAOPS <<|>>|$|$$|@|@@|~|<>
 
 <cstring>{
 \'/([ \t]|{ENDL})*[\"\'] {adjust(); BEGIN INITIAL;}
-\'                 {adjust(); 
+\'                 {adjust();
                     BEGIN INITIAL;
-                    getstring(); 
+                    getstring();
                     return STRING; }
 <<EOF>>            {adjust();
                     setEOF("string not terminated");
                     BEGIN INITIAL;
-                    getstring(); 
+                    getstring();
                     return GARBAGE;
                    }
 {ENDL}             {adjust(); newline(); append('\n'); continue; }
@@ -266,32 +266,32 @@ EXTRAOPS <<|>>|$|$$|@|@@|~|<>
                     char x=(char)(yytext[1]-'0');
                     append(x);
                     continue;
-                   } 
+                   }
 {ESC}[0-7][0-7]    {adjust();
                     char x=(char)((yytext[1]-'0')*8+yytext[2]-'0');
                     append(x);
                     continue;
-                   } 
+                   }
 {ESC}[0-3][0-7][0-7] {adjust();
                     char x=(char)((yytext[1]-'0')*64+(yytext[2]-'0')*8
                             +yytext[3]-'0');
                     append(x);
                     continue;
-                   } 
+                   }
 {ESC}x[0-9,A-F]    {adjust();
-                    char x=(char) (yytext[2] <= '9' ? yytext[2]-'0' : 
+                    char x=(char) (yytext[2] <= '9' ? yytext[2]-'0' :
                                                       10+yytext[2]-'A');
                     append(x);
                     continue;
-                   } 
+                   }
 {ESC}x[0-9,A-F][0-9,A-F] {adjust();
-                    char x=(char) ((yytext[2] <= '9' ? yytext[2]-'0' : 
+                    char x=(char) ((yytext[2] <= '9' ? yytext[2]-'0' :
                                                       10+yytext[2]-'A')*16
-                                  +(yytext[3] <= '9' ? yytext[3]-'0' : 
+                                  +(yytext[3] <= '9' ? yytext[3]-'0' :
                                                       10+yytext[3]-'A'));
                     append(x);
                     continue;
-                   } 
+                   }
 .                  {adjust(); append(*yytext); }
 }
 
@@ -363,6 +363,7 @@ break              {adjust(); return BREAK; }
 continue           {adjust(); return CONTINUE; }
 struct             {adjust(); return STRUCT; }
 typedef            {adjust(); return TYPEDEF; }
+using              {adjust(); return USING; }
 new                {adjust(); return NEW; }
 access             {adjust(); return ACCESS; }
 import             {adjust(); return IMPORT; }
@@ -372,26 +373,28 @@ include            {adjust(); return INCLUDE; }
 quote              {adjust(); return QUOTE; }
 static             {adjust(); makemod(trans::EXPLICIT_STATIC);
                               return MODIFIER; }
+autounravel        {adjust(); makemod(trans::AUTOUNRAVEL);
+                              return MODIFIER; }
 public             {adjust(); makeperm(trans::PUBLIC); return PERM; }
 private            {adjust(); makeperm(trans::PRIVATE); return PERM; }
 restricted         {adjust(); makeperm(trans::RESTRICTED); return PERM; }
-this               {adjust(); return THIS; }
+this               {adjust(); return THIS_TOK; }
 explicit           {adjust(); return EXPLICIT; }
 
 
 [0-9]+             try {
-  adjust(); yylval.e= new intExp(here(), lexical::cast<Int>(yytext)); 
+  adjust(); yylval.e= new intExp(here(), lexical::cast<Int>(yytext));
   } catch (lexical::bad_cast&) {
     error();
     em << "invalid integer";
-    yylval.e= new intExp(here(), 0); 
+    yylval.e= new intExp(here(), 0);
   } return LIT;
 ([0-9]*\.[0-9]+)|([0-9]+\.[0-9]*)|([0-9]*\.*[0-9]+e[-+]*[0-9]+)|([0-9]+\.[0-9]*e[-+]*[0-9]+)  try {
   adjust(); yylval.e= new realExp(here(), lexical::cast<double>(yytext));
   } catch (lexical::bad_cast&) {
     error();
     em << "invalid real";
-    yylval.e= new realExp(here(), 0); 
+    yylval.e= new realExp(here(), 0);
   } return LIT;
 true               {
   adjust(); yylval.e= new booleanExp(here(), true); return LIT; }
@@ -406,7 +409,7 @@ newframe        {
 
 operator           {adjust(); BEGIN opname; }
 <opname>{
-[ \t\r]            {adjust(); continue;} 
+[ \t\r]            {adjust(); continue;}
 {ENDL}             {adjust(); newline(); continue;}
 <<EOF>>            {adjust();
                     setEOF("missing operator name");
@@ -430,7 +433,7 @@ operator           {adjust(); BEGIN opname; }
 
 {LETTER}({LETTER}|[0-9])* {
   makesymbol();
-  return ID; }  
+  return ID; }
 
 \/\*               {adjust(); /*commentDepth = 1;*/ BEGIN lexcomment; }
 \"                 {startstring(); BEGIN texstring; }

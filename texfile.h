@@ -22,7 +22,7 @@
 #include "array.h"
 #include "psfile.h"
 #include "settings.h"
-#include "process.h"
+#include "asyprocess.h"
 
 namespace camp {
 
@@ -57,18 +57,21 @@ void latexfontencoding(T& out)
       << "\\makeatother%" << newl;
 }
 
+std::unordered_set const latexCharacters = {'#', '$', '%', '&', '\\', '^', '_', '{', '}', '~'};
+
 template<class T>
 void texpreamble(T& out, mem::list<string>& preamble=processData().TeXpreamble,
                  bool pipe=false, bool ASYbox=true)
 {
   texuserpreamble(out,preamble,pipe);
   string texengine=settings::getSetting<string>("tex");
+  string outPath=stripFile(settings::outname());
   if(settings::context(texengine))
     out << "\\disabledirectives[system.errorcontext]%" << newl;
   if(ASYbox)
     out << "\\newbox\\ASYbox" << newl
         << "\\newdimen\\ASYdimen" << newl;
-  out << "\\def\\ASYprefix{" << stripFile(settings::outname()) << "}" << newl
+  out << "\\def\\ASYprefix{" << escapeCharacters(outPath, latexCharacters) << "}" << newl
       << "\\long\\def\\ASYbase#1#2{\\leavevmode\\setbox\\ASYbox=\\hbox{#1}%"
       << "\\ASYdimen=\\ht\\ASYbox%" << newl
       << "\\setbox\\ASYbox=\\hbox{#2}\\lower\\ASYdimen\\box\\ASYbox}" << newl;
@@ -307,7 +310,7 @@ public:
   void put(const string& label, const transform& T, const pair& z,
            const pair& Align);
 
-  void beginlayer(const string& psname, bool postscript);
+  void beginlayer(string psname, bool postscript);
   void endlayer();
 
   virtual void Offset(const bbox& box, bool special=false) {};
@@ -416,23 +419,29 @@ public:
     beginpath();
   }
 
+// Workaround libc++ parsing bug under MacOS.
+#ifdef __APPLE__
+  const string sep=" ";
+#else
+  const string sep="";
+#endif
   void moveto(pair z) {
-    *out << "M";
+    *out << sep << "M";
     writeshifted(z);
   }
 
   void lineto(pair z) {
-    *out << "L";
+    *out << sep << "L";
     writeshifted(z);
   }
 
   void curveto(pair zp, pair zm, pair z1) {
-    *out << "C";
+    *out << sep << "C";
     writeshifted(zp); writeshifted(zm); writeshifted(z1);
   }
 
   void closepath() {
-    *out << "Z";
+    *out << sep << "Z";
   }
 
   string rgbhex(pen p) {

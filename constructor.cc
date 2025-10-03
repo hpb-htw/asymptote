@@ -50,7 +50,7 @@ bool definesImplicitConstructor(coenv &e, record *r, varEntry *v, symbol id)
   return false;
 }
 
-// Given the coenv of the body of the constructor, encode the neccessary
+// Given the coenv of the body of the constructor, encode the necessary
 // instructions to make a new initialized object.
 void transConstructorBody(position pos, coenv &e, record *r, varEntry *init)
 {
@@ -61,7 +61,7 @@ void transConstructorBody(position pos, coenv &e, record *r, varEntry *init)
   varEntry *v=makeVarEntry(pos, e, 0 /* not a field */, r);
 
   // Initialize the object.  a=new Foo;
-  newRecordExp::transFromTyEntry(pos, e, new tyEntry(r, 0, 0, position()));
+  newRecordExp::transFromTyEntry(pos, e, new tyEntry(r, 0, 0, nullPos));
   v->encode(WRITE, pos, e.c);
   e.c.encodePop();
 

@@ -1,5 +1,5 @@
 /* Fast Fourier transform C++ header class for the FFTW3 Library
-   Copyright (C) 2004-2022
+   Copyright (C) 2004-2024
    John C. Bowman, University of Alberta
    Malcolm Roberts, University of Strasbourg
 
@@ -20,7 +20,7 @@
 #ifndef __fftwpp_h__
 #define __fftwpp_h__ 1
 
-#define __FFTWPP_H_VERSION__ 2.11
+#define __FFTWPP_H_VERSION__ 3.03
 
 #include <cstdlib>
 #include <fstream>
@@ -43,11 +43,6 @@ typedef std::complex<double> Complex;
 #include "align.h"
 
 namespace fftwpp {
-
-// Obsolete names:
-#define FFTWComplex ComplexAlign
-#define FFTWdouble doubleAlign
-#define FFTWdelete deleteAlign
 
 // Return the memory alignment used by FFTW.
 // Use of this function requires applying patches/fftw-3.3.8-alignment.patch
@@ -81,10 +76,6 @@ public:
       innerthreads=threads;
       threads=1;
     }
-  }
-
-  int get_thread_num0() {
-    return threads > 1 ? parallel::get_thread_num() : 0;
   }
 };
 
@@ -264,7 +255,7 @@ public:
 
   static void planThreads(size_t threads) {
 #ifndef FFTWPP_SINGLE_THREAD
-    omp_set_num_threads(threads);
+    omp_set_num_threads(fftw::maxthreads);
     fftw_plan_with_nthreads(threads);
 #endif
   }
@@ -527,9 +518,9 @@ struct keyless {
   bool operator()(const keytype& a, const keytype& b) const {
     return a.nx < b.nx || (a.nx == b.nx &&
                            (a.M < b.M || (a.M == b.M &&
-                                              (a.threads < b.threads ||
-                                               (a.threads == b.threads &&
-                                                a.inplace < b.inplace)))));
+                                          (a.threads < b.threads ||
+                                           (a.threads == b.threads &&
+                                            a.inplace < b.inplace)))));
   }
 };
 
@@ -662,7 +653,7 @@ public:
     }
   }
 
-  bool time(Complex *in, Complex *out) {
+  bool time0(Complex *in, Complex *out) {
     utils::statistics S(true),ST(true);
     utils::statistics medianS(true),medianST(true);
 
@@ -696,6 +687,13 @@ public:
     return S.median() <= ST.median();
   }
 
+  bool time(Complex *in, Complex *out) {
+    bool alloc=!in;
+    if(alloc) in=utils::ComplexAlign((doubles+1)/2);
+    bool result=time0(in,out);
+    if(alloc) Array::deleteAlign(in,(doubles+1)/2);
+    return result;
+  }
 
   fftw_plan Plan(int Q, fftw_complex *in, fftw_complex *out) {
     return fftw_plan_many_dft(1,&nx,Q,in,NULL,istride,idist,
@@ -983,9 +981,9 @@ public:
     init((Complex *) in,out,threads,threadtable);
   }
 
-  void Normalize(Complex *out) {
-    fftw::Normalize<Complex>(nx/2+1,M,ostride,odist,out);
-  }
+    void Normalize(Complex *out) {
+      fftw::Normalize<Complex>(nx/2+1,M,ostride,odist,out);
+    }
 
   void fftNormalized(double *in, Complex *out=NULL) {
     fftw::fftNormalized<double,Complex>(nx/2+1,M,ostride,odist,in,out);
@@ -1013,7 +1011,7 @@ public:
 //   ostride is the spacing between the elements of each Complex vector;
 //   idist is the spacing between the first elements of the real vectors;
 //   odist is the spacing between the first elements of the Complex vectors;
-//   in contains the n real values stored as a Complex array;
+//   in contains the n real values;
 //   out contains the first n/2+1 Complex Fourier values.
 //
 class mrcfft1d {
@@ -1081,9 +1079,9 @@ public:
     init(in,(Complex *) out,threads,threadtable);
   }
 
-  void Normalize(double *out) {
-    fftw::Normalize<double>(nx,M,ostride,odist,out);
-  }
+    void Normalize(double *out) {
+      fftw::Normalize<double>(nx,M,ostride,odist,out);
+    }
 
   void fftNormalized(Complex *in, double *out=NULL) {
     fftw::fftNormalized<Complex,double>(nx,M,ostride,odist,in,out);
@@ -1108,10 +1106,12 @@ public:
 //   Backward.fft(out);
 //
 // Notes:
-//   stride is the spacing between the elements of each Complex vector;
-//   dist is the spacing between the first elements of the vectors;
+//   istride is the spacing between the elements of each Complex vector;
+//   ostride is the spacing between the elements of each real vector;
+//   idist is the spacing between the first elements of the Complex vectors;
+//   odist is the spacing between the first elements of the real vectors;
 //   in contains the first n/2+1 Complex Fourier values;
-//   out contains the n real values stored as a Complex array.
+//   out contains the n real values.
 //
 class mcrfft1d {
   bool single;

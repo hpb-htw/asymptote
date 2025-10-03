@@ -2,7 +2,7 @@
  * primitives.h
  * Andy Hammerlindl 2007/04/27
  *
- * A list of the primative types in Asymptote, defined using the
+ * A list of the primitive types in Asymptote, defined using the
  * PRIMITIVE(name,Name,asyName) macro.  This macro should be defined in by the
  * code including this file for the context at hand.
  *
@@ -35,7 +35,7 @@ PRIMITIVE(path3,Path3,path3)
 PRIMITIVE(cycleToken,CycleToken,cycleToken)
 PRIMITIVE(tensionSpecifier,TensionSpecifier,tensionSpecifier)
 PRIMITIVE(curlSpecifier,CurlSpecifier,curlSpecifier)
-  PRIMITIVE(pen,Pen,pen)
+PRIMITIVE(pen,Pen,pen)
 PRIMITIVE(picture,Picture,frame)
 PRIMITIVE(file,File,file)
 PRIMITIVE(code,Code,code)

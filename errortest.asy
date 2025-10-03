@@ -26,12 +26,12 @@
   // line 95
   x y1;
   x y2();
-  x y3(int); 
+  x y3(int);
   int y4(x);
   struct m {
     x y1;
     x y2();
-    x y3(int); 
+    x y3(int);
     int y4(x);
   }
 }
@@ -264,7 +264,7 @@
 
   int x = 1;
   int x = 2;
- 
+
   struct m {
     int f() {
       return 1;
@@ -511,4 +511,130 @@
   int g(real t, int notkeyword x, int y) { return 7; }
   int f(real t, int notkeyword x, int y, string z);
   int g(real t, int notkeyword x, int y, string z) { return 7; }
+}
+
+// template import errors
+{
+  // Need to specify new name.
+  access somefilename(T=int);
+  // "as" misspelled
+  access somefilename(T=int) notas somefilename_int;
+  // missing keyword
+  access somefilename(int) as somefilename_int;
+  // Templated import unsupported
+  import somefilename(T=int);
+  // unexpected template parameters
+  access errortestNonTemplate(T=int) as version;
+}
+{
+  typedef import(T);  // this file isn't accessed as a template
+  import typedef(T);  // should be "typedef import"
+}
+{
+  // wrong number of parameters
+  access errortestBrokenTemplate(A=int, B=string) as ett_a;
+  // third param incorrectly named
+  access errortestBrokenTemplate(A=int, B=string, T=real) as ett_b;
+  // keywords in wrong order
+  access errortestBrokenTemplate(A=int, C=real, B=string) as ett_c;
+  // errortestBrokenTemplate.asy has extra "typedef import"
+  access errortestBrokenTemplate(A=int, B=string, C=real) as ett_d;
+  // expected template parameters
+  access errortestBrokenTemplate as ett_e;
+}
+
+// autounravel errors
+{
+  struct A {
+    static static int x;  // too many static modifiers
+    autounravel static int y;  // no error
+    static autounravel int z;  // no error
+    autounravel autounravel int w;  // too many autounravel modifiers
+    autounravel static autounravel int v;  // too many autounravel modifiers
+    static autounravel static int u;  // too many static modifiers
+    autounravel struct B {}  // types cannot be autounraveled
+  }
+}
+{
+  autounravel int x;  // top-level fields cannot be autounraveled
+}
+{
+  struct A {
+    autounravel int qaz;
+    autounravel int qaz;  // cannot shadow autounravel qaz
+  }
+}
+{
+  // Even if the first (implicitly defined) instance of a function is allowed
+  // to be shadowed, the (explicit) shadower cannot itself be shadowed.
+  struct A {
+    autounravel bool alias(A, A);  // no error
+    autounravel bool alias(A, A);  // cannot shadow autounravel alias
+  }
+}
+{
+  // Non-statically nested types cannot be used as template parameters.
+  struct A {
+    struct B {
+      autounravel int x;
+    }
+    access somefilename(T=B) as somefilename_B;
+  }
+  A a;
+  access somefilename(T=a.B) as somefilename_B;
+  access somefilename(T=A.B) as somefilename_B;
+}
+{
+  // no error
+  access errortestTemplate(A=int, B=string) as eft;
+  // wrongly ordered names after correct load
+  access errortestTemplate(B=int, A=string) as eft;
+  // completely wrong names after correct load
+  access errortestTemplate(C=int, D=string) as eft;
+  // first name correct, second name wrong
+  access errortestTemplate(A=int, D=string) as eft;
+  // first name wrong, second name correct
+  access errortestTemplate(C=int, B=string) as eft;
+  // too few parameters
+  access errortestTemplate(A=int) as eft;
+  // too many parameters
+  access errortestTemplate(A=int, B=string, C=real) as eft;
+  // templated imports cannot be run directly
+  include errortestTemplate;
+}
+// Test more permissions.
+{
+  struct A {
+    static int x;
+    static int f;
+    static void f();
+    static struct R {}
+  }
+  struct T {
+    private static from A unravel x;
+    private static from A unravel f;
+    private static from A unravel R;
+  }
+  T.x;  // incorrectly accessing private field
+  (int)T.f;  // incorrectly accessing overloaded private field
+  T.f();  // incorrectly accessing overloaded private field
+  T.R r;  // correctly accessing private type
+  struct U {
+    private static unravel A;
+  }
+  U.x;  // incorrectly accessing private field
+  (int)U.f;  // incorrectly accessing overloaded private field
+  U.f();  // incorrectly accessing overloaded private field
+  U.R r;  // correctly accessing private type
+}
+{
+  struct A {
+    static struct B {
+      autounravel int x;
+    }
+  }
+  struct T {
+    private from A unravel B;  // x is autounraveled from B
+  }
+  T.x;  // incorrectly accessing private field
 }

@@ -15,8 +15,8 @@ using namespace types;
 
 namespace trans {
 
-// Instances of this class are passed to types::ty objects so that they can call
-// back to env when checking casting of subtypes.
+// Instances of this class are passed to types::ty objects so that they can
+// call back to env when checking casting of subtypes.
 class envCaster : public caster {
   protoenv &e;
   symbol name;
@@ -40,7 +40,7 @@ access *protoenv::baseLookupCast(ty *target, ty *source, symbol name) {
          source->kind != ty_overloaded);
 
   // If errors already exist, don't report more.  This may, however, cause
-  // problems with resoving the signature of an overloaded function.  The
+  // problems with resolving the signature of an overloaded function.  The
   // abstract syntax should check if any of the parameters had an error before
   // finding the signature.
   if (target->kind == ty_error || source->kind == ty_error)
@@ -188,12 +188,7 @@ void protoenv::addArrayOps(array *a)
 
 void protoenv::addRecordOps(record *r)
 {
-  trans::addRecordOps(ve, r);
-}
-
-void protoenv::addFunctionOps(function *f)
-{
-  trans::addFunctionOps(ve, f);
+  trans::addRecordOps(r);
 }
 
 env::env(genv &ge)
@@ -212,6 +207,17 @@ env::~env()
 record *env::getModule(symbol id, string filename)
 {
   return ge.getModule(id, filename);
+}
+
+record *env::getTemplatedModule(string filename,
+                                mem::vector<absyntax::namedTy*>* args)
+{
+  return ge.getTemplatedModule(filename, args);
+}
+
+record *env::getLoadedModule(symbol id)
+{
+  return ge.getLoadedModule(id);
 }
 
 }

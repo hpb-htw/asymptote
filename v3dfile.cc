@@ -8,7 +8,7 @@
 
 #include "v3dfile.h"
 
-#ifdef HAVE_RPC_RPC_H
+#ifdef HAVE_LIBTIRPC
 
 #ifdef HAVE_LIBGLM
 
@@ -299,10 +299,11 @@ void v3dfile::finalize()
 
 xdr::oxstream& gzv3dfile::getXDRFile()
 {
-  return memxdrfile;
+  return memfile.memxdrfile;
 }
 
-gzv3dfile::gzv3dfile(string const& name, bool singleprecision): v3dfile(singleprecision), memxdrfile(singleprecision), name(name), destroyed(false)
+gzv3dfile::gzv3dfile(string const& name, bool singleprecision):
+  v3dfile(singleprecision), memfile(name,singleprecision)
 {
   writeInit();
 }
@@ -314,26 +315,8 @@ gzv3dfile::~gzv3dfile()
 
 void gzv3dfile::close()
 {
-  if(!destroyed) {
-    finalize();
-    memxdrfile.close();
-    gzFile file=gzopen(name.c_str(), "wb9");
-    gzwrite(file,data(),length());
-    gzclose(file);
-    if(settings::verbose > 0)
-      cout << "Wrote " << name << endl;
-    destroyed=true;
-  }
-}
-
-char const* gzv3dfile::data() const
-{
-  return memxdrfile.stream();
-}
-
-size_t const& gzv3dfile::length() const
-{
-  return memxdrfile.getLength();
+  finalize();
+  memfile.close();
 }
 
 uint32_t LightHeader::getWordSize(bool singleprecision) const
